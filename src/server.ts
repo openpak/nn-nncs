@@ -1,6 +1,7 @@
 import net from 'node:net';
 import os from 'node:os';
 import dgram from 'node:dgram';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import 'dotenv/config';
 
 type NATMessage = {
@@ -10,21 +11,25 @@ type NATMessage = {
 	localAddress: number;
 };
 
-// * No real need for a full blown config manager here
-// TODO - Currently assumes both IPs point to the same server. Support a mode where only 1 address is needed, for cases where 2 entirely different servers are used
-const NNCS1_IP_ADDRESS = process.env.PN_NNCS1_IP_ADDRESS;
-const NNCS2_IP_ADDRESS = process.env.PN_NNCS2_IP_ADDRESS;
+// OpenPak runs the two NAT check servers on two hosts, each behind cloud NAT with one public
+// address (upstream bound both public IPs on one machine). Each instance knows its role and
+// its peer; the one message type that must be answered from the *other* address (type 2) is
+// relayed to the peer, which sends the reply from its own alternate socket.
+const ROLE = process.env.PN_NNCS_ROLE;
+const PEER_HOST: string = process.env.PN_NNCS_PEER_HOST ?? '';
+const RELAY_PORT = Number(process.env.PN_NNCS_RELAY_PORT || 10225);
+const RELAY_SECRET: string = process.env.PN_NNCS_RELAY_SECRET ?? '';
 
-if (!NNCS1_IP_ADDRESS?.trim()) {
-	throw new Error('PN_NNCS1_IP_ADDRESS environment variable not set');
+if (ROLE !== 'nncs1' && ROLE !== 'nncs2') {
+	throw new Error('PN_NNCS_ROLE must be nncs1 or nncs2');
 }
 
-if (!NNCS2_IP_ADDRESS?.trim()) {
-	throw new Error('PN_NNCS2_IP_ADDRESS environment variable not set');
+if (!PEER_HOST.trim()) {
+	throw new Error('PN_NNCS_PEER_HOST environment variable not set (public address of the other NAT check server)');
 }
 
-if (NNCS1_IP_ADDRESS === NNCS2_IP_ADDRESS) {
-	throw new Error('PN_NNCS1_IP_ADDRESS and PN_NNCS2_IP_ADDRESS may not be the same address. Must use 2 different public IP addresses');
+if (!RELAY_SECRET.trim()) {
+	throw new Error('PN_NNCS_RELAY_SECRET environment variable not set (shared with the peer)');
 }
 
 const LOCAL_IP_ADDRESS = getLocalIPAddress();
@@ -35,15 +40,15 @@ const SECONDARY_PORT = 10125;
 const UNKNOWN_PORT_33334 = 33334; // * Unknown uses
 const UNKNOWN_PORT_33335 = 33335; // * Unknown uses
 
-const PRIMARY_SOCKET_NNCS1 = dgram.createSocket('udp4');
-const PRIMARY_SOCKET_NNCS2 = dgram.createSocket('udp4');
-const SECONDARY_SOCKET_NNCS1 = dgram.createSocket('udp4');
-const SECONDARY_SOCKET_NNCS2 = dgram.createSocket('udp4');
+const PRIMARY_SOCKET = dgram.createSocket('udp4');
+const SECONDARY_SOCKET = dgram.createSocket('udp4');
 
 // * Message types 2, 3 and 102 send responses back from random ports. So
-// * create "alternate" sockets for these message types
-const ALTERNATE_SOCKET_NNCS1 = dgram.createSocket('udp4');
-const ALTERNATE_SOCKET_NNCS2 = dgram.createSocket('udp4');
+// * create an "alternate" socket for these message types
+const ALTERNATE_SOCKET = dgram.createSocket('udp4');
+
+// * Peer relay: type 2 requests the peer received, to be answered from our alternate socket
+const RELAY_SOCKET = dgram.createSocket('udp4');
 
 // * NNCS1 gets messages on 2 ports with unknown uses. Just sinkholing them for now
 // * so the client knows the ports are reachable
@@ -61,16 +66,31 @@ const HANDLERS: Record<number, (message: any, rinfo: dgram.RemoteInfo, socket: d
 	103: handleMessageType103
 };
 
-PORT_33334_SOCKET.bind(UNKNOWN_PORT_33334, NNCS1_IP_ADDRESS);
-PORT_33335_SOCKET.bind(UNKNOWN_PORT_33335, NNCS1_IP_ADDRESS);
-PRIMARY_SOCKET_NNCS1.bind(PRIMARY_PORT, NNCS1_IP_ADDRESS);
-PRIMARY_SOCKET_NNCS2.bind(PRIMARY_PORT, NNCS2_IP_ADDRESS);
-SECONDARY_SOCKET_NNCS1.bind(SECONDARY_PORT, NNCS1_IP_ADDRESS);
-SECONDARY_SOCKET_NNCS2.bind(SECONDARY_PORT, NNCS2_IP_ADDRESS);
-ALTERNATE_SOCKET_NNCS1.bind(0, NNCS1_IP_ADDRESS); // * Let the OS assign a random port
-ALTERNATE_SOCKET_NNCS2.bind(0, NNCS2_IP_ADDRESS); // * Let the OS assign a random port
+if (ROLE === 'nncs1') {
+	PORT_33334_SOCKET.bind(UNKNOWN_PORT_33334);
+	PORT_33335_SOCKET.bind(UNKNOWN_PORT_33335);
+}
+PRIMARY_SOCKET.bind(PRIMARY_PORT);
+SECONDARY_SOCKET.bind(SECONDARY_PORT);
+ALTERNATE_SOCKET.bind(0); // * Let the OS assign a random port
+RELAY_SOCKET.bind(RELAY_PORT);
 
-[PRIMARY_SOCKET_NNCS1, PRIMARY_SOCKET_NNCS2, SECONDARY_SOCKET_NNCS1, SECONDARY_SOCKET_NNCS2].forEach((socket) => {
+RELAY_SOCKET.on('message', (msg: Buffer, rinfo: dgram.RemoteInfo) => {
+	// * 32-byte HMAC-SHA256 | 16-byte response | 4-byte destination address | 2-byte destination port
+	if (msg.length !== 54 || rinfo.address !== PEER_HOST) {
+		return;
+	}
+	const mac = createHmac('sha256', RELAY_SECRET).update(msg.subarray(32)).digest();
+	if (!timingSafeEqual(mac, msg.subarray(0, 32))) {
+		return;
+	}
+	const response = msg.subarray(32, 48);
+	const address = int2ip(msg.readUInt32BE(48));
+	const port = msg.readUInt16BE(52);
+	ALTERNATE_SOCKET.send(response, port, address);
+});
+
+[PRIMARY_SOCKET, SECONDARY_SOCKET].forEach((socket) => {
 	socket.on('message', (msg: Buffer, rinfo: dgram.RemoteInfo) => {
 		handleMessage(msg, rinfo, socket);
 	});
@@ -145,25 +165,22 @@ function handleMessageType1(message: NATMessage, rinfo: dgram.RemoteInfo, socket
 	socket.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
 }
 
-function handleMessageType2(message: NATMessage, rinfo: dgram.RemoteInfo, socket: dgram.Socket): void {
+function handleMessageType2(message: NATMessage, rinfo: dgram.RemoteInfo, _socket: dgram.Socket): void {
 	// * The server replies from a different IP address and port.
 	// * NEX uses this to determine the NAT filtering mode.
-	// * It is assumed that "different IP" simply means "the other NNCS"
-	if (socket.address().address === NNCS1_IP_ADDRESS) {
-		ALTERNATE_SOCKET_NNCS2.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
-	} else {
-		ALTERNATE_SOCKET_NNCS1.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
-	}
+	// * "Different IP" means the other NNCS, which lives on another host: relay it there.
+	const body = Buffer.alloc(22);
+	createResponse(message, rinfo).copy(body, 0);
+	body.writeUInt32BE(ip2int(rinfo.address), 16);
+	body.writeUInt16BE(rinfo.port, 20);
+	const mac = createHmac('sha256', RELAY_SECRET).update(body).digest();
+	RELAY_SOCKET.send(Buffer.concat([mac, body]), RELAY_PORT, PEER_HOST);
 }
 
-function handleMessageType3(message: NATMessage, rinfo: dgram.RemoteInfo, socket: dgram.Socket): void {
+function handleMessageType3(message: NATMessage, rinfo: dgram.RemoteInfo, _socket: dgram.Socket): void {
 	// * The server replies from its regular IP address but from a different port.
 	// * NEX uses this to determine the NAT filtering mode.
-	if (socket.address().address === NNCS1_IP_ADDRESS) {
-		ALTERNATE_SOCKET_NNCS1.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
-	} else {
-		ALTERNATE_SOCKET_NNCS2.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
-	}
+	ALTERNATE_SOCKET.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
 }
 
 function handleMessageType4(message: NATMessage, rinfo: dgram.RemoteInfo, socket: dgram.Socket): void {
@@ -183,13 +200,9 @@ function handleMessageType101(message: NATMessage, rinfo: dgram.RemoteInfo, sock
 	socket.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
 }
 
-function handleMessageType102(message: NATMessage, rinfo: dgram.RemoteInfo, socket: dgram.Socket): void {
+function handleMessageType102(message: NATMessage, rinfo: dgram.RemoteInfo, _socket: dgram.Socket): void {
 	// * The server replies from its regular IP address but from a different port.
-	if (socket.address().address === NNCS1_IP_ADDRESS) {
-		ALTERNATE_SOCKET_NNCS1.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
-	} else {
-		ALTERNATE_SOCKET_NNCS2.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
-	}
+	ALTERNATE_SOCKET.send(createResponse(message, rinfo), rinfo.port, rinfo.address);
 }
 
 function handleMessageType103(message: NATMessage, rinfo: dgram.RemoteInfo, socket: dgram.Socket): void {
@@ -199,4 +212,10 @@ function handleMessageType103(message: NATMessage, rinfo: dgram.RemoteInfo, sock
 
 function ip2int(ip: string): number {
 	return Buffer.from(ip.split('.').map(Number)).readUInt32BE();
+}
+
+function int2ip(n: number): string {
+	const b = Buffer.alloc(4);
+	b.writeUInt32BE(n);
+	return Array.from(b).join('.');
 }
