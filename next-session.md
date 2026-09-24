@@ -1,12 +1,15 @@
 # Next session — nn-nncs
 
-Updated 2026-09-15.
+Updated 2026-09-24.
 
 NAT check server (Pretendo `nncs`, AGPL) for Wii U, 3DS — and the Switch,
 which speaks the same protocol on the same ports. Deployed 2026-09-10 as two
 instances on two public addresses, per the console's requirement that nncs1
-and nncs2 never share an IP. Not console-verified. Tree clean apart from
-placeholder `CHANGELOG.md` / `docs/` / `prds/`.
+and nncs2 never share an IP. Not console-verified. Tree clean.
+
+Current status 2026-09-24: latest tag still v0.1.1 (0fedd95). Since then only
+the README Switch note (6bc131c), CI on `v*.*.*` tags only (5fa30cb) and docs
+commits — all untagged.
 
 ## Where things stand
 
