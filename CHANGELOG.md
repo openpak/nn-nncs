@@ -3,8 +3,9 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
-## Unreleased
+## v0.1.2 — 2026-09-24
 
+- deps: npm audit fix, dev tooling only (Dependabot)
 - README: the Switch is served too [6bc131c]
 - ci: build only on v*.*.* tags [5fa30cb]; docs: next-session, changelog, scratch rule
 
