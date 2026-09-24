@@ -6,11 +6,12 @@ of truth; this file is the readable summary.
 ## Unreleased
 
 - README: the Switch is served too [6bc131c]
+- ci: build only on v*.*.* tags [5fa30cb]; docs: next-session, changelog, scratch rule
 
 
-## v0.1.0 — 2026-09-10
+## v0.1.1 — 2026-09-10
 
-
+- Dockerfile: install the runtime dependency (dotenv is not bundled by tsup) [0fedd95]
 
 ## v0.1.0 — 2026-09-10
 
