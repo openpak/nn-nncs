@@ -1,48 +1,44 @@
-# OpenPak nn-nncs — NAT check server for Wii U, 3DS and Switch
+# Wii U/3DS NAT Check Server
 
-Fork of Pretendo's `nncs` (AGPL-3.0). The Switch (`nncs1-lp1.n.n.srv.nintendo.net`, `nncs2-lp1.n.n.srv.nintendo.net`, redirected by `openpak.nro`) speaks the same protocol on the same ports. Wii U and 3DS consoles resolve `nncs1.app.nintendowifi.net` and
-`nncs2.app.nintendowifi.net` to two **different public addresses** and probe UDP 10025 and
-10125 on each to classify their NAT before NEX matchmaking.
+OpenPak's Wii U/3DS NAT Check Server.
 
-OpenPak runs one instance per host, each behind cloud NAT with a single address, so the
-upstream "both IPs on one machine" model does not apply. Each instance has a role (`nncs1` or
-`nncs2`) and a peer; message type 2, which must be answered from the *other* address, is
-relayed to the peer over UDP `PN_NNCS_RELAY_PORT` with an HMAC shared secret, and the peer
-answers from its own alternate socket. Everything else is answered locally. See
-`example.env`; run with host networking (`Network=host`).
+| | |
+| --- | --- |
+| Network | Wii U, 3DS, Switch |
+| Role | NAT check for NEX matchmaking: two instances (`nncs1`, `nncs2`) on separate public addresses, peered over UDP |
+| Image | `ghcr.io/openpak/nn-nncs` |
+| Based on | [Pretendo `nncs`](https://github.com/PretendoNetwork/nncs) (AGPL-3.0) |
+| Licence | AGPL-3.0-only |
 
-Image: `ghcr.io/openpak/nn-nncs` on tag.
+## What it serves
 
----
+| Endpoint | What |
+| --- | --- |
+| UDP 10025, 10125 | NAT check probes, both roles (message types: see [upstream](docs/upstream.md)) |
+| UDP 33334, 33335 | Reachability sinkholes on nncs1, no replies |
+| UDP 10225 (`PN_NNCS_RELAY_PORT`) | Peer relay for message type 2, HMAC-authenticated |
 
-# NAT Check Server
-Used to detect NAT properties to perform NAT traversal
+## Run
 
-Consoles require a primary and secondary server (`nncs1.app.nintendowifi.net` and `nncs2.app.nintendowifi.net` respectively), each with a primary and secondary port (`10025` and `10125` respectively) and each server MUST be differing public IP addresses.
+```sh
+cp example.env .env   # fill in the values for this instance
+npm ci
+npm run build
+npm start
+```
 
-Meaning the `nncs1.app.nintendowifi.net:10025`, `nncs1.app.nintendowifi.net:10125`, `nncs2.app.nintendowifi.net:10025`, and `nncs2.app.nintendowifi.net:10125` must all exist and `nncs1` and `nncs2` can _**NOT**_ point to the same IP address
+Container, ports and environment: [deploy](docs/deploy.md).
 
-## Implemented message types
-See function comments for message type details
+## Docs
 
-- [x] Message type 1
-- [x] Message type 2
-- [x] Message type 3
-- [x] Message type 4
-- [x] Message type 5
-- [x] Message type 101
-- [x] Message type 102
-- [x] Message type 103
+- [Protocol](docs/protocol.md)
+- [Evidence](docs/evidence.md)
+- [Deploy](docs/deploy.md)
+- [Notes](docs/notes.md)
+- [Upstream README](docs/upstream.md)
+- [Docs index](docs/README.md)
+- [Switch NAT check](docs/switch-nat-check.md)
 
-## Additional messages
-Clients can also be seen sending messages to port `33334` and `33335` of NNCS1, however these messages never get replies. Because of the lack of responses, these messages are not handled here. Messages to port `33334` seem to always be 16 null bytes, whereas messages to port `33335` seem to always be 56 bytes of mostly static data.
+## Licence
 
-## Configuration
-
-Configurations are loaded through environment variables. `.env` files are supported. IP addresses are assumed to be pointing at the same server, though they must be different IP addresses, so both are required.
-
-| Environment variable       | Description                                                                                                                                                                                                                               | Required |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `PN_NNCS1_IP_ADDRESS`      | IP address for the NNCS1 server                                                                                                                                                                                                           | Yes      |
-| `PN_NNCS2_IP_ADDRESS`      | IP address for the NNCS2 server                                                                                                                                                                                                           | Yes      |
-| `PN_NNCS_LOCAL_IP_ADDRESS` | Local IPv4 address of the server. If not set or is not a valid IPv4 address, the server will use the first private IPv4 address it can find. If a private IPv4 cannot be found and one is not set, the system will default to `127.0.0.1` | No       |
+AGPL-3.0-only. See [LICENSE](LICENSE).
