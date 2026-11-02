@@ -33,10 +33,10 @@ Container, ports and environment: [deploy](docs/deploy.md).
 
 - [Protocol](docs/protocol.md)
 - [Deploy](docs/deploy.md)
-- [Notes](docs/notes.md)
 - [Upstream README](docs/upstream.md)
-- [Docs index](docs/README.md)
 - [Switch NAT check](docs/switch-nat-check.md)
+
+PRDs: openpak/prds (private)
 
 ## Licence
 
