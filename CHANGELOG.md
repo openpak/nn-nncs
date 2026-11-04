@@ -3,6 +3,12 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
+## v0.1.3 — 2026-11-04
+
+- The Switch NAT check notes are folded into the docs
+- Images publish with the org GHCR token; pull-request check workflow
+- docs: README, protocol and deploy only; links point at docs.openpak.org
+
 ## v0.1.2 — 2026-09-24
 
 - deps: npm audit fix, dev tooling only (Dependabot)
